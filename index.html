@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>קוקו</title>
+  <meta name="theme-color" content="#FBF6EF" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1A1714" media="(prefers-color-scheme: dark)">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="קוקו">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="boot" class="boot">🐾</div>
+
+  <section id="login" class="login" hidden>
+    <div class="login-card">
+      <div class="logo">🐾</div>
+      <h1>קוקו</h1>
+      <p class="muted">כל מה שצריך לדעת על הכלב שלנו</p>
+      <form id="loginForm">
+        <input type="email" name="email" autocomplete="username" required placeholder="מייל" dir="ltr">
+        <input type="password" name="password" autocomplete="current-password" required placeholder="סיסמה" dir="ltr">
+        <button class="btn primary block">כניסה</button>
+        <p class="err" id="loginErr"></p>
+      </form>
+    </div>
+  </section>
+
+  <div id="app" hidden>
+    <main id="view"></main>
+    <nav class="nav">
+      <button data-tab="home"><span class="ni">🏠</span>בית</button>
+      <button data-tab="care"><span class="ni">💉<span class="badge" hidden></span></span>טיפולים</button>
+      <button data-tab="items"><span class="ni">🦴</span>מוצרים</button>
+      <button data-tab="weight"><span class="ni">⚖️</span>משקל</button>
+    </nav>
+  </div>
+
+  <dialog id="sheet" class="sheet"></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
