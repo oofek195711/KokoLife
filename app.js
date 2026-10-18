@@ -1,6 +1,6 @@
 import { initStore, DEMO } from './core/store.js';
 
-const VERSION = '1.1.0';
+const VERSION = '1.1.1';
 
 // ---------- helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -440,17 +440,104 @@ function photoPicker(current, label) {
   return `<button type="button" class="photo-pick" data-act="pick-photo">${current ? `<img src="${esc(current)}" alt="">` : `<span>📷<br>${label}</span>`}</button>
     <input type="file" accept="image/*" id="photoInput" hidden>`;
 }
-function bindPhoto(form, maxSide) {
-  form.querySelector('#photoInput').addEventListener('change', async (e) => {
+function bindPhoto(form, maxSide, shape = 'square') {
+  const input = form.querySelector('#photoInput');
+  input.addEventListener('change', async (e) => {
     const file = e.target.files[0];
+    input.value = '';
     if (!file) return;
     const pick = form.querySelector('.photo-pick');
-    pick.classList.add('loading');
     try {
-      pendingPhoto = await compressImage(file, maxSide);
+      const out = await cropImage(file, { shape, size: maxSide });
+      if (!out) return;
+      pendingPhoto = out;
       pick.innerHTML = `<img src="${pendingPhoto}" alt="">`;
+      pick.classList.toggle('square', shape !== 'wide');
     } catch { toast('לא הצלחתי לקרוא את התמונה'); }
-    pick.classList.remove('loading');
+  });
+}
+
+// ---------- photo cropper: drag to move, pinch / slider to zoom ----------
+function cropImage(file, { shape = 'square', size = 1000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('bad image')); };
+    img.onload = () => {
+      const d = document.createElement('dialog');
+      d.className = 'cropper';
+      d.innerHTML = `
+        <div class="crop-head">${shape === 'circle' ? 'מזיזים ומגדילים עד שהפנים במרכז' : 'בוחרים איזה חלק בתמונה יישמר'}</div>
+        <div class="crop-stage ${shape}" dir="ltr"><img alt=""><div class="crop-mask"></div></div>
+        <div class="crop-zoom"><span>−</span><input type="range" min="1" max="4" step="0.01" value="1" aria-label="זום"><span>+</span></div>
+        <p class="crop-hint">גוררים כדי להזיז · צובטים או מזיזים את הסרגל כדי להגדיל</p>
+        <div class="crop-actions">
+          <button type="button" class="btn ghost" data-crop="cancel">ביטול</button>
+          <button type="button" class="btn primary" data-crop="ok">שימוש בתמונה</button>
+        </div>`;
+      document.body.appendChild(d);
+      const stage = d.querySelector('.crop-stage'), im = stage.querySelector('img'), range = d.querySelector('input');
+      im.src = url;
+      d.showModal();
+
+      const F = stage.clientWidth;
+      const W = img.naturalWidth, H = img.naturalHeight;
+      const minS = Math.max(F / W, F / H);
+      let s = minS, tx = (F - W * s) / 2, ty = (F - H * s) / 2;
+      const clamp = () => {
+        tx = Math.min(0, Math.max(F - W * s, tx));
+        ty = Math.min(0, Math.max(F - H * s, ty));
+      };
+      const draw = () => { clamp(); im.style.transform = `translate(${tx}px, ${ty}px) scale(${s})`; range.value = (s / minS).toFixed(2); };
+      const zoomTo = (ns, px = F / 2, py = F / 2) => {
+        ns = Math.min(minS * 4, Math.max(minS, ns));
+        tx = px - (px - tx) * (ns / s); ty = py - (py - ty) * (ns / s); s = ns; draw();
+      };
+      draw();
+
+      const pts = new Map();
+      let last = null;
+      const rel = (e) => { const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+      const snapshot = () => {
+        const a = [...pts.values()];
+        if (a.length === 1) return { x: a[0][0], y: a[0][1] };
+        const [p1, p2] = a;
+        return { x: (p1[0] + p2[0]) / 2, y: (p1[1] + p2[1]) / 2, dist: Math.hypot(p1[0] - p2[0], p1[1] - p2[1]) };
+      };
+      stage.addEventListener('pointerdown', (e) => { stage.setPointerCapture(e.pointerId); pts.set(e.pointerId, rel(e)); last = snapshot(); });
+      stage.addEventListener('pointermove', (e) => {
+        if (!pts.has(e.pointerId)) return;
+        pts.set(e.pointerId, rel(e));
+        const now = snapshot();
+        if (last && now.dist && last.dist) {
+          tx += now.x - last.x; ty += now.y - last.y;
+          zoomTo(s * (now.dist / last.dist), now.x, now.y);
+        } else if (last && !now.dist && !last.dist) {
+          tx += now.x - last.x; ty += now.y - last.y; draw();
+        }
+        last = now;
+      });
+      const up = (e) => { pts.delete(e.pointerId); last = pts.size ? snapshot() : null; };
+      stage.addEventListener('pointerup', up);
+      stage.addEventListener('pointercancel', up);
+      stage.addEventListener('wheel', (e) => { e.preventDefault(); const [x, y] = rel(e); zoomTo(s * (e.deltaY < 0 ? 1.1 : 0.9), x, y); }, { passive: false });
+      range.addEventListener('input', () => zoomTo(minS * Number(range.value)));
+
+      const finish = (result) => { d.close(); d.remove(); URL.revokeObjectURL(url); resolve(result); };
+      d.addEventListener('cancel', (e) => { e.preventDefault(); finish(null); });
+      d.querySelector('[data-crop="cancel"]').onclick = () => finish(null);
+      d.querySelector('[data-crop="ok"]').onclick = () => {
+        const srcSize = F / s;
+        const outSize = Math.round(Math.min(size, srcSize));
+        const c = document.createElement('canvas');
+        c.width = c.height = outSize;
+        c.getContext('2d').drawImage(img, -tx / s, -ty / s, srcSize, srcSize, 0, 0, outSize, outSize);
+        let q = 0.82, out = c.toDataURL('image/jpeg', q);
+        while (out.length > 600000 && q > 0.35) { q -= 0.1; out = c.toDataURL('image/jpeg', q); }
+        finish(out);
+      };
+    };
+    img.src = url;
   });
 }
 
@@ -537,7 +624,7 @@ function sheetProfile() {
     toast('נשמר ✓');
   });
   pendingPhoto = p.photo || null;
-  bindPhoto(f, 600);
+  bindPhoto(f, 600, 'circle');
 }
 
 // ---------- calendar (.ics) ----------
