@@ -1,5 +1,5 @@
 // Network-first for the app's own files (updates show up right away), cache as offline fallback.
-const CACHE = 'koko-1.0.1';
+const CACHE = 'koko-1.0.2';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './store.js', './firebase-config.js',
   './manifest.json', './icons/icon-192.png', './icons/apple-touch-icon.png'];
 

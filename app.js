@@ -1,6 +1,6 @@
 import { initStore, DEMO } from './store.js';
 
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
 
 // ---------- helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
