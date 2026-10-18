@@ -354,3 +354,15 @@ label.check input { width: 22px; height: 22px; margin: 0; accent-color: var(--pr
 .crop-actions { display: flex; gap: 10px; }
 .crop-actions .btn { flex: 1; }
 .photo-pick.square { aspect-ratio: 1; max-width: 320px; margin: 0 auto; }
+
+/* ---------- pull to refresh ---------- */
+.ptr {
+  position: fixed; top: calc(-44px + var(--safe-t)); left: 50%; transform: translate(-50%, 0);
+  width: 40px; height: 40px; border-radius: 50%; background: var(--card); box-shadow: 0 2px 10px rgba(0,0,0,.15);
+  display: grid; place-items: center; font-size: 1.1rem; color: var(--muted); z-index: 40; opacity: 0; transition: opacity .15s;
+}
+.ptr.show { opacity: 1; }
+.ptr.ready { color: var(--primary); }
+.ptr.spin { transform: translate(-50%, 70px) !important; animation: ptrspin .8s linear infinite; }
+@keyframes ptrspin { to { transform: translate(-50%, 70px) rotate(360deg); } }
+html, body { overscroll-behavior-y: contain; }

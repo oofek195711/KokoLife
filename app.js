@@ -1,6 +1,6 @@
 import { initStore, DEMO } from './core/store.js';
 
-const VERSION = '1.1.1';
+const VERSION = '1.1.2';
 
 // ---------- helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -1148,6 +1148,50 @@ $('#loginForm').addEventListener('submit', async (e) => {
     S.user = user;
     stopWatch();
     if (user) { startWatch(); showApp(); } else showLogin();
+  });
+})();
+
+// ---------- staying fresh on iPhone ----------
+// iOS freezes home-screen apps in the background and the live connection can go stale.
+// 1) Re-subscribe whenever the app comes back to the foreground.
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (!S.user || document.body.classList.contains('sitter-mode')) return;
+  if (Date.now() - hiddenAt > 10 * 60 * 1000) { location.reload(); return; }
+  stopWatch(); startWatch();
+});
+window.addEventListener('online', () => { if (S.user) { stopWatch(); startWatch(); } });
+
+// 2) Pull down from the top to refresh.
+(() => {
+  const ind = document.createElement('div');
+  ind.className = 'ptr';
+  ind.innerHTML = '<span>↓</span>';
+  document.body.appendChild(ind);
+  let startY = null, dy = 0;
+  const TH = 80;
+  document.addEventListener('touchstart', (e) => {
+    if (window.scrollY > 0 || $('#sheet').open || document.querySelector('.cropper') || $('#app').hidden) { startY = null; return; }
+    startY = e.touches[0].clientY; dy = 0;
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (startY === null) return;
+    dy = e.touches[0].clientY - startY;
+    if (dy <= 0 || window.scrollY > 0) { ind.style.transform = ''; ind.classList.remove('show'); return; }
+    const pull = Math.min(dy, 130) * 0.6;
+    ind.classList.add('show');
+    ind.style.transform = `translate(-50%, ${pull}px) rotate(${Math.min(dy / TH, 1) * 180}deg)`;
+    ind.classList.toggle('ready', dy > TH);
+  }, { passive: true });
+  document.addEventListener('touchend', () => {
+    if (startY === null) return;
+    if (dy > TH) {
+      ind.classList.add('spin');
+      ind.innerHTML = '<span>🐾</span>';
+      setTimeout(() => location.reload(), 250);
+    } else { ind.style.transform = ''; ind.classList.remove('show', 'ready'); }
+    startY = null;
   });
 })();
 
