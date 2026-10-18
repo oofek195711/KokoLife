@@ -269,3 +269,63 @@ label.check input { width: 22px; height: 22px; margin: 0; accent-color: var(--pr
   opacity: 0; pointer-events: none; transition: .25s; z-index: 50; max-width: 90vw; text-align: center;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* ---------- food ---------- */
+.food { margin-top: 18px; border-inline-start: 5px solid var(--line); }
+.food.ok { border-inline-start-color: var(--ok); }
+.food.soon { border-inline-start-color: var(--soon); }
+.food.over { border-inline-start-color: var(--over); }
+.food-top { display: flex; align-items: center; gap: 12px; }
+.ficon { font-size: 1.6rem; flex: none; }
+.finfo { flex: 1; min-width: 0; }
+.fmsg { font-size: .92rem; }
+.food.soon .fmsg { color: var(--soon); font-weight: 500; }
+.food.over .fmsg { color: var(--over); font-weight: 500; }
+.bar { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; margin: 12px 0 10px; }
+.bar span { display: block; height: 100%; background: var(--ok); border-radius: 99px; }
+.food.soon .bar span { background: var(--soon); }
+.food.over .bar span { background: var(--over); }
+.food-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.sub-title { margin: 22px 0 4px; font-size: 1rem; }
+
+/* ---------- sitter button / page ---------- */
+.sitter-btn { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; text-align: start; cursor: pointer; margin-top: 10px; }
+.chev { color: var(--muted); font-size: 1.4rem; }
+.share-box { margin-top: 22px; padding: 14px; border-radius: 16px; background: var(--card); box-shadow: inset 0 0 0 1.5px var(--line); }
+.share-box .row.gap { flex-wrap: wrap; justify-content: flex-start; gap: 8px; margin-top: 10px; }
+.share-box a.btn { text-decoration: none; display: inline-block; }
+.link-text { font-size: .78rem; color: var(--muted); word-break: break-all; margin-top: 6px; text-align: left; }
+.sitter-mode .nav { display: none; }
+.sitter-mode #view { padding-bottom: calc(40px + var(--safe-b)); }
+.sitter-hero { margin-bottom: 16px; }
+.sitter-hero .avatar { cursor: default; }
+.scard h3 { font-size: 1rem; font-weight: 700; margin-bottom: 6px; }
+.scard p { margin: 0; white-space: pre-wrap; }
+.scard.warn { background: var(--primary-soft); }
+.call-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0; color: inherit; text-decoration: none; border-top: 1px solid var(--line); }
+.call-row:first-of-type { border-top: 0; }
+.call { font-size: 1.3rem; background: var(--primary-soft); border-radius: 50%; width: 40px; height: 40px; display: grid; place-items: center; flex: none; }
+.center { text-align: center; }
+
+/* ---------- expenses ---------- */
+.month-nav { display: flex; align-items: center; justify-content: space-between; background: var(--card); border-radius: 999px; padding: 4px; box-shadow: var(--shadow); }
+.month-nav .icon-btn { font-size: 1.5rem; color: var(--text); }
+.month-nav .icon-btn:disabled { opacity: .25; }
+.mname { font-weight: 500; }
+.exp-total { font-size: 2.6rem; font-weight: 700; text-align: center; margin: 14px 0 10px; }
+.cats { display: flex; flex-direction: column; gap: 10px; }
+.crow { display: grid; grid-template-columns: 9.5em 1fr auto; align-items: center; gap: 10px; font-size: .9rem; }
+.cname { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cbar { height: 8px; background: var(--line); border-radius: 99px; overflow: hidden; }
+.cbar span { display: block; height: 100%; background: var(--primary); border-radius: 99px; }
+.exp-year { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px; font-size: .92rem; }
+.erow { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; text-align: start; cursor: pointer; }
+.erow.plain { background: none; padding: 10px 4px; border-bottom: 1px solid var(--line); border-radius: 0; }
+.eicon { font-size: 1.35rem; flex: none; width: 1.6em; text-align: center; }
+.einfo { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.einfo b { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.eamt { font-weight: 700; white-space: nowrap; }
+.eamt small { font-weight: 400; color: var(--muted); }
+.nav button { max-width: 96px; }
+.btn { white-space: nowrap; }
+.food-foot .btn { flex: none; }

@@ -1,6 +1,6 @@
-import { initStore, DEMO } from './store.js';
+import { initStore, DEMO } from './core/store.js';
 
-const VERSION = '1.0.2';
+const VERSION = '1.1.0';
 
 // ---------- helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -11,6 +11,14 @@ const today = () => toISO(new Date());
 const parse = (s) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d); };
 const fmt = (iso) => (iso ? parse(iso).toLocaleDateString('he-IL', { day: 'numeric', month: 'numeric', year: 'numeric' }) : '');
 const daysUntil = (iso) => Math.round((parse(iso) - parse(today())) / 86400000);
+const ym = (iso) => iso.slice(0, 7);
+const nextMonth = (m) => { let [y, mo] = m.split('-').map(Number); mo++; if (mo > 12) { mo = 1; y++; } return `${y}-${pad(mo)}`; };
+const prevMonth = (m) => { let [y, mo] = m.split('-').map(Number); mo--; if (mo < 1) { mo = 12; y--; } return `${y}-${pad(mo)}`; };
+const monthDate = (m, day) => { const [y, mo] = m.split('-').map(Number); return `${m}-${pad(Math.min(Number(day) || 1, new Date(y, mo, 0).getDate()))}`; };
+const monthName = (m) => parse(m + '-01').toLocaleDateString('he-IL', { month: 'long', year: 'numeric' });
+const money = (n) => '₪' + (Number(n) || 0).toLocaleString('he-IL', { maximumFractionDigits: 2 });
+const parseAmount = (v) => parseFloat(String(v || '').replace(/[^\d.,]/g, '').replace(',', '.')) || 0;
+const sum = (arr) => arr.reduce((a, e) => a + (Number(e.amount) || 0), 0);
 const byName = (email) => (email && email !== 'demo' ? email.split('@')[0] : '');
 
 function addInterval(iso, every, unit) {
@@ -74,12 +82,18 @@ const CATS = [
   ['gear', 'ציוד', '🦮'], ['care', 'טיפוח', '🛁'], ['places', 'מקומות', '📍'], ['other', 'אחר', '📦'],
 ];
 const catOf = (k) => CATS.find((c) => c[0] === k) || CATS[CATS.length - 1];
+const EXP_CATS = [
+  ['vet', 'וטרינר', '🩺'], ['insurance', 'ביטוח', '🛡️'], ['food', 'אוכל', '🍖'], ['meds', 'תרופות וטיפולים', '💊'],
+  ['toys', 'ציוד וצעצועים', '🎾'], ['care', 'טיפוח', '🛁'], ['boarding', 'פנסיון ושמרטף', '🏠'], ['other', 'אחר', '📦'],
+];
+const expCatOf = (k) => EXP_CATS.find((c) => c[0] === k) || EXP_CATS[EXP_CATS.length - 1];
 const VERDICTS = { love: ['😍', 'אהב'], ok: ['😐', 'ככה ככה'], no: ['👎', 'לא אהב'] };
 
 // ---------- state ----------
 const S = {
   user: null, profile: {}, treatments: [], history: [], items: [], weights: [],
-  tab: 'home', careSeg: 'plan', itemFilter: 'all', onlyLove: false,
+  expenses: [], recurring: [], foodBags: [], ready: {},
+  tab: 'home', careSeg: 'plan', itemFilter: 'all', onlyLove: false, expMonth: ym(today()),
 };
 let store;
 let unsubs = [];
@@ -117,7 +131,7 @@ const sortedWeights = () => [...S.weights].sort((a, b) => a.date.localeCompare(b
 // ---------- views ----------
 function render() {
   if (!S.user) return;
-  const views = { home: viewHome, care: viewCare, items: viewItems, weight: viewWeight };
+  const views = { home: viewHome, care: viewCare, items: viewItems, money: viewExpenses, weight: viewWeight };
   $('#view').innerHTML =
     (DEMO ? `<div class="demo">מצב הדגמה – הנתונים נשמרים רק בדפדפן הזה. אחרי מילוי firebase-config.js הכל יעבור לענן.</div>` : '') +
     views[S.tab]() + footer();
@@ -178,6 +192,8 @@ function viewHome() {
     <button class="icon-btn" data-act="edit-profile" aria-label="עריכת פרופיל">✎</button>
   </section>
 
+  ${foodCard()}
+
   <div class="sec-head"><h2>הבא בתור</h2>${up.length > 3 ? `<button class="link" data-act="go" data-to="care">הכל (${up.length})</button>` : ''}</div>
   ${up.length ? up.slice(0, 3).map(treatmentCard).join('') : emptyState('עוד לא הוספתם טיפולים וחיסונים', 'add-treatment', '+ הוספת טיפול')}
 
@@ -189,6 +205,12 @@ function viewHome() {
   </a>` : ''}
 
   ${p.notes ? `<div class="card note-card"><b>חשוב לזכור</b><p>${esc(p.notes)}</p></div>` : ''}
+
+  <button class="card sitter-btn" data-act="sitter">
+    <span class="vet-icon">🧾</span>
+    <span class="vet-text"><b>כרטיס לשמרטף</b><span class="muted small">${p.sitterToken ? 'יש קישור פעיל לשיתוף' : `כל מה שמי ששומר על ${esc(dogName())} צריך לדעת`}</span></span>
+    <span class="chev">‹</span>
+  </button>
 
   <div class="sec-head"><h2>${esc(dogName())} אהב</h2><button class="link" data-act="go" data-to="items">לכל המוצרים</button></div>
   ${loved.length ? `<div class="hscroll">${loved.map(itemCard).join('')}</div>` : emptyState('קניתם משהו שהוא אהב? צלמו ושמרו', 'add-item', '+ הוספת מוצר')}
@@ -373,10 +395,13 @@ function sheetDone(t) {
     <label>תאריך ביצוע<input type="date" name="date" value="${today()}" max="${today()}" required></label>
     <label>איפה / אצל מי <small>(לא חובה)</small><input name="where" placeholder="למשל: ד״ר כהן"></label>
     <label>הערות <small>(לא חובה)</small><textarea name="notes" rows="2"></textarea></label>
+    <label>עלות ₪ <small>(לא חובה – תירשם בהוצאות)</small><input name="cost" inputmode="decimal" autocomplete="off"></label>
     ${t.recurring ? '<p class="hint calc" id="calc"></p>' : '<p class="hint">טיפול חד פעמי – אחרי הסימון הוא יעבור להיסטוריה.</p>'}
     <button class="btn primary block">✓ סימון כבוצע</button>`;
   const f = openSheet('סימון כבוצע', body, (d) => {
     write(store.add('history', { treatmentId: t.id, name: t.name, type: t.type, date: d.date, where: d.where.trim(), notes: d.notes.trim() }));
+    const cost = parseAmount(d.cost);
+    if (cost > 0) write(store.add('expenses', { date: d.date, amount: cost, cat: ['חיסון', 'בדיקה'].includes(t.type) ? 'vet' : 'meds', note: t.name }));
     if (t.recurring) {
       const next = addInterval(d.date, t.every, t.unit);
       write(store.update('treatments', t.id, { lastDone: d.date, nextDue: next }));
@@ -508,6 +533,7 @@ function sheetProfile() {
     const data = { name: d.name.trim(), breed: d.breed.trim(), birthDate: d.birthDate, chip: d.chip.trim(), vetName: d.vetName.trim(), vetPhone: d.vetPhone.trim(), notes: d.notes.trim() };
     if (pendingPhoto) data.photo = pendingPhoto;
     write(store.saveProfile(data));
+    syncPublic(data);
     toast('נשמר ✓');
   });
   pendingPhoto = p.photo || null;
@@ -555,6 +581,361 @@ function compressImage(file, maxSide = 1000) {
   });
 }
 
+// ---------- recurring expenses (auto-generated monthly, deterministic ids → no duplicates) ----------
+function seedDefaults() {
+  if (!S.ready.profile || !S.ready.recurring) return;
+  const seeded = S.profile.seeded || {};
+  if (seeded.marpet) return;
+  if (!S.recurring.some((r) => r.id === 'marpet')) {
+    write(store.set('recurring', 'marpet', {
+      name: 'ביטוח MARPET', amount: 115, cat: 'insurance', day: 1, startDate: ym(today()) + '-01', active: true,
+    }));
+  }
+  S.profile.seeded = { ...seeded, marpet: true };
+  write(store.saveProfile({ seeded: { ...seeded, marpet: true } }));
+}
+
+function genRecurring() {
+  const now = today();
+  for (const r of S.recurring) {
+    if (r.active === false || !r.startDate) continue;
+    let m = r.lastGenerated ? nextMonth(r.lastGenerated) : ym(r.startDate);
+    let last = null;
+    for (let i = 0; i < 120; i++) {
+      const date = monthDate(m, r.day);
+      if (date > now) break;
+      if (date >= r.startDate) {
+        write(store.set('expenses', `r_${r.id}_${m}`, { date, amount: Number(r.amount) || 0, cat: r.cat, note: r.name, recurringId: r.id }));
+      }
+      last = m; m = nextMonth(m);
+    }
+    if (last) { r.lastGenerated = last; write(store.update('recurring', r.id, { lastGenerated: last })); }
+  }
+}
+
+// ---------- expenses view ----------
+function viewExpenses() {
+  const m = S.expMonth;
+  const list = S.expenses.filter((e) => e.date && e.date.startsWith(m)).sort((a, b) => b.date.localeCompare(a.date));
+  const total = sum(list);
+  const y = m.slice(0, 4);
+  const yearList = S.expenses.filter((e) => e.date && e.date.startsWith(y));
+  const yearTotal = sum(yearList);
+  const firstMonth = yearList.length ? Math.min(...yearList.map((e) => Number(e.date.slice(5, 7)))) : 1;
+  const lastMonth = y === today().slice(0, 4) ? Number(today().slice(5, 7)) : 12;
+  const avg = yearTotal / Math.max(1, lastMonth - firstMonth + 1);
+  const isCurrent = m >= ym(today());
+
+  const byCat = {};
+  for (const e of list) byCat[e.cat] = (byCat[e.cat] || 0) + (Number(e.amount) || 0);
+  const cats = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+  const max = cats.length ? cats[0][1] : 1;
+
+  const rec = [...S.recurring].sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+  return `
+  <header class="vhead"><h1>הוצאות</h1><button class="btn primary small" data-act="add-expense">+ הוצאה</button></header>
+  <div class="month-nav">
+    <button class="icon-btn" data-act="exp-month" data-d="-1" aria-label="חודש קודם">›</button>
+    <div class="mname">${monthName(m)}</div>
+    <button class="icon-btn" data-act="exp-month" data-d="1" aria-label="חודש הבא" ${isCurrent ? 'disabled' : ''}>‹</button>
+  </div>
+  <div class="exp-total">${money(total)}</div>
+  ${cats.length ? `<div class="card cats">${cats.map(([k, v]) => {
+    const c = expCatOf(k);
+    return `<div class="crow"><span class="cname">${c[2]} ${c[1]}</span><span class="cbar"><span style="width:${Math.max(4, Math.round((v / max) * 100))}%"></span></span><b>${money(v)}</b></div>`;
+  }).join('')}</div>` : ''}
+  <div class="card exp-year"><span>סה״כ ${y}: <b>${money(yearTotal)}</b></span><span class="muted">ממוצע לחודש ${money(Math.round(avg))}</span></div>
+
+  <div class="sec-head"><h2>הוצאות קבועות</h2><button class="link" data-act="add-recurring">+ הוספה</button></div>
+  ${rec.length ? rec.map((r) => {
+    const c = expCatOf(r.cat);
+    return `<button class="card erow" data-act="edit-recurring" data-id="${r.id}">
+      <span class="eicon">${c[2]}</span>
+      <span class="einfo"><b>${esc(r.name)}</b><span class="muted small">${r.active === false ? 'מושהה' : `כל חודש ב-${r.day || 1} לחודש`}</span></span>
+      <span class="eamt">${money(r.amount)}<small> / חודש</small></span>
+    </button>`;
+  }).join('') : '<p class="muted small">אין הוצאות קבועות</p>'}
+
+  <div class="sec-head"><h2>פירוט החודש</h2></div>
+  ${list.length ? list.map((e) => {
+    const c = expCatOf(e.cat);
+    return `<button class="erow plain" data-act="edit-expense" data-id="${e.id}">
+      <span class="eicon">${c[2]}</span>
+      <span class="einfo"><b>${esc(e.note || c[1])}</b><span class="muted small">${fmt(e.date)}${e.recurringId ? ' · קבוע' : ''}${byName(e.by) ? ` · ${esc(byName(e.by))}` : ''}</span></span>
+      <span class="eamt">${money(e.amount)}</span>
+    </button>`;
+  }).join('') : emptyState('אין הוצאות בחודש הזה', 'add-expense', '+ הוספת הוצאה')}`;
+}
+
+const expCatOptions = (sel) => EXP_CATS.map((c) => `<option value="${c[0]}" ${c[0] === sel ? 'selected' : ''}>${c[2]} ${c[1]}</option>`).join('');
+
+function sheetExpense(e) {
+  const isNew = !e;
+  e = e || { date: today(), cat: 'vet' };
+  const body = `
+    <label>סכום ₪<input name="amount" inputmode="decimal" required value="${e.amount ?? ''}" autocomplete="off" placeholder="0"></label>
+    <label>קטגוריה<select name="cat">${expCatOptions(e.cat)}</select></label>
+    <label>על מה<input name="note" value="${esc(e.note)}" placeholder="למשל: ביקור אצל הווטרינר" autocomplete="off"></label>
+    <label>תאריך<input type="date" name="date" value="${e.date}" required></label>
+    ${e.recurringId ? '<p class="hint">זה חיוב של הוצאה קבועה. שינוי כאן משפיע רק על החודש הזה.</p>' : ''}
+    <button class="btn primary block">${isNew ? 'הוספה' : 'שמירה'}</button>
+    ${!isNew ? `<button type="button" class="btn ghost danger block" data-act="del-expense" data-id="${e.id}">מחיקה</button>` : ''}`;
+  openSheet(isNew ? 'הוצאה חדשה' : 'עריכת הוצאה', body, (d) => {
+    const amount = parseAmount(d.amount);
+    if (!amount) { toast('צריך להזין סכום'); return false; }
+    const data = { amount, cat: d.cat, note: d.note.trim(), date: d.date };
+    write(isNew ? store.add('expenses', data) : store.update('expenses', e.id, data));
+    if (isNew && ym(d.date) !== S.expMonth) S.expMonth = ym(d.date) <= ym(today()) ? ym(d.date) : S.expMonth;
+    toast(isNew ? 'נוסף ✓' : 'נשמר ✓');
+  });
+}
+
+function sheetRecurring(r) {
+  const isNew = !r;
+  r = r || { cat: 'insurance', day: 1, startDate: ym(today()) + '-01', active: true };
+  const body = `
+    <label>שם<input name="name" required value="${esc(r.name)}" placeholder="למשל: ביטוח" autocomplete="off"></label>
+    <div class="row two">
+      <label>סכום חודשי ₪<input name="amount" inputmode="decimal" required value="${r.amount ?? ''}"></label>
+      <label>יום בחודש<input name="day" type="number" min="1" max="31" inputmode="numeric" value="${r.day || 1}"></label>
+    </div>
+    <label>קטגוריה<select name="cat">${expCatOptions(r.cat)}</select></label>
+    <label>החל מתאריך<input type="date" name="startDate" value="${r.startDate}" required></label>
+    <label class="check"><input type="checkbox" name="active" ${r.active !== false ? 'checked' : ''}> פעיל</label>
+    <p class="hint">כל חודש החיוב נרשם לבד בהוצאות. שינוי סכום משפיע מהחיוב הבא והלאה. הקדמת "החל מתאריך" תשלים גם חודשים קודמים.</p>
+    <button class="btn primary block">${isNew ? 'הוספה' : 'שמירה'}</button>
+    ${!isNew ? `<button type="button" class="btn ghost danger block" data-act="del-recurring" data-id="${r.id}">מחיקה</button>` : ''}`;
+  openSheet(isNew ? 'הוצאה קבועה חדשה' : 'עריכת הוצאה קבועה', body, (d) => {
+    const amount = parseAmount(d.amount);
+    if (!amount) { toast('צריך להזין סכום'); return false; }
+    const data = {
+      name: d.name.trim(), amount, cat: d.cat, active: !!d.active,
+      day: Math.min(31, Math.max(1, parseInt(d.day, 10) || 1)), startDate: d.startDate,
+    };
+    if (isNew) write(store.add('recurring', data));
+    else {
+      if (d.startDate !== r.startDate) data.lastGenerated = d.startDate < r.startDate ? null : (r.lastGenerated || null);
+      write(store.update('recurring', r.id, data));
+    }
+    toast(isNew ? 'נוסף ✓' : 'נשמר ✓');
+  });
+}
+
+// ---------- food run-out ----------
+const sortedBags = () => [...S.foodBags].sort((a, b) => a.date.localeCompare(b.date));
+function foodStatus() {
+  const bags = sortedBags();
+  if (!bags.length) return null;
+  const last = bags[bags.length - 1];
+  const gaps = [];
+  for (let i = Math.max(1, bags.length - 3); i < bags.length; i++) {
+    const g = Math.round((parse(bags[i].date) - parse(bags[i - 1].date)) / 86400000);
+    if (g >= 3) gaps.push(g);
+  }
+  const learned = gaps.length > 0;
+  const est = learned ? Math.round(gaps.reduce((a, b) => a + b, 0) / gaps.length) : (Number(S.profile.food?.days) || 30);
+  const runOut = addInterval(last.date, est, 'days');
+  const left = daysUntil(runOut);
+  const used = Math.min(1, Math.max(0, (est - left) / est));
+  return { last, est, learned, runOut, left, used };
+}
+
+function foodCard() {
+  const f = foodStatus();
+  if (!f) {
+    return `<div class="card food">
+      <div class="food-top"><span class="ficon">🍖</span><div class="finfo"><b>מתי ייגמר האוכל?</b>
+        <div class="muted small">מסמנים כשפותחים שק חדש, והאפליקציה תדע מתי צריך לקנות את הבא</div></div></div>
+      <button class="btn primary small block" data-act="food-bag">פתחנו שק אוכל</button>
+    </div>`;
+  }
+  const st = f.left <= 3 ? 'over' : f.left <= 7 ? 'soon' : 'ok';
+  const msg = f.left < 0 ? `כנראה כבר נגמר (לפי ההערכה, לפני ${-f.left} ימים)`
+    : f.left === 0 ? 'נגמר בערך היום – הזמן לקנות'
+    : f.left <= 7 ? `נשארו בערך ${f.left} ימים – הזמן לקנות`
+    : `נשארו בערך ${f.left} ימים`;
+  return `<div class="card food ${st}">
+    <div class="food-top"><span class="ficon">🍖</span>
+      <div class="finfo"><b>${esc(f.last.name || 'אוכל')}</b><div class="fmsg">${msg}</div></div>
+      <button class="icon-btn" data-act="food-settings" aria-label="הגדרות אוכל">⋯</button></div>
+    <div class="bar"><span style="width:${Math.round(f.used * 100)}%"></span></div>
+    <div class="food-foot"><span class="muted small">נפתח ${fmt(f.last.date)} · ${f.learned ? `לפי הקצב שלכם: שק לכ-${f.est} ימים` : `הערכה: שק לכ-${f.est} ימים`}</span>
+      <button class="btn small ${st === 'ok' ? '' : 'primary'}" data-act="food-bag">שק חדש</button></div>
+  </div>`;
+}
+
+function sheetFoodBag() {
+  const bags = sortedBags(), last = bags[bags.length - 1], first = !bags.length;
+  const names = [...new Set([...bags.map((b) => b.name), ...S.items.filter((i) => i.cat === 'food').map((i) => i.name)].filter(Boolean))];
+  const body = `
+    <label>מתי פתחתם<input type="date" name="date" value="${today()}" max="${today()}" required></label>
+    <label>איזה אוכל<input name="name" list="foodnames" value="${esc(last?.name || '')}" placeholder="שם האוכל" autocomplete="off"></label>
+    <datalist id="foodnames">${names.map((n) => `<option value="${esc(n)}">`).join('')}</datalist>
+    <label>מחיר ₪ <small>(לא חובה – יירשם בהוצאות)</small><input name="price" inputmode="decimal" autocomplete="off"></label>
+    ${first ? `<label>כמה זמן בערך שק מחזיק? <small>(ימים)</small><input name="days" type="number" min="3" inputmode="numeric" value="${S.profile.food?.days || 30}"></label>
+      <p class="hint">מהשק השני והלאה האפליקציה תחשב לבד לפי הקצב האמיתי שלכם.</p>` : ''}
+    <button class="btn primary block">שמירה</button>`;
+  openSheet('פתחנו שק חדש', body, (d) => {
+    const name = d.name.trim();
+    write(store.add('foodBags', { date: d.date, name }));
+    const price = parseAmount(d.price);
+    if (price > 0) write(store.add('expenses', { date: d.date, amount: price, cat: 'food', note: name ? `שק אוכל – ${name}` : 'שק אוכל' }));
+    if (first && d.days) write(store.saveProfile({ food: { ...(S.profile.food || {}), days: Math.max(3, parseInt(d.days, 10) || 30) } }));
+    syncPublic({}, name);
+    toast('נשמר ✓');
+  });
+}
+
+function sheetFoodSettings() {
+  const bags = sortedBags().reverse();
+  const body = `
+    <label>הערכה כשאין מספיק היסטוריה <small>(ימים לשק)</small><input name="days" type="number" min="3" inputmode="numeric" value="${S.profile.food?.days || 30}"></label>
+    <p class="hint">אחרי שני שקים ומעלה החישוב נעשה לפי ממוצע הזמן בין השקים האחרונים.</p>
+    <button class="btn primary block">שמירה</button>
+    <h3 class="sub-title">שקים שנפתחו</h3>
+    <ul class="hist">${bags.map((b) => `<li class="hrow"><span class="hicon">🍖</span>
+      <div class="hinfo"><b>${esc(b.name || 'אוכל')}</b><div class="muted">${fmt(b.date)}</div></div>
+      <button type="button" class="icon-btn" data-act="del-bag" data-id="${b.id}" aria-label="מחיקה">🗑</button></li>`).join('')}</ul>`;
+  openSheet('אוכל', body, (d) => {
+    write(store.saveProfile({ food: { ...(S.profile.food || {}), days: Math.max(3, parseInt(d.days, 10) || 30) } }));
+    toast('נשמר ✓');
+  });
+}
+
+// ---------- sitter card ----------
+const SITTER_FIELDS = [
+  ['feeding', '🍖', 'אוכל', 'כמה ומתי? למשל: כוס בבוקר וכוס בערב'],
+  ['meds', '💊', 'תרופות וטיפולים', 'אם יש תרופה קבועה – מה, כמה ומתי'],
+  ['walks', '🚶', 'טיולים ושגרה', 'כמה טיולים ביום, שעות, איפה הוא אוהב'],
+  ['behavior', '🐾', 'התנהגות', 'מה מלחיץ אותו, עם אילו כלבים להיזהר, פקודות שהוא מכיר'],
+  ['other', '📝', 'עוד דברים', 'איפה הרצועה, איפה הוא ישן, מה אסור לו...'],
+];
+
+function buildPublic(profileOverride = {}, foodName) {
+  const p = { ...S.profile, ...profileOverride };
+  const s = p.sitter || {};
+  return {
+    name: p.name || 'קוקו', photo: p.photo || '', breed: p.breed || '', birthDate: p.birthDate || '',
+    chip: p.chip || '', vetName: p.vetName || '', vetPhone: p.vetPhone || '', notes: p.notes || '',
+    foodName: foodName ?? (foodStatus()?.last.name || ''),
+    feeding: s.feeding || '', meds: s.meds || '', walks: s.walks || '', behavior: s.behavior || '', other: s.other || '',
+    contacts: [[s.c1n, s.c1p], [s.c2n, s.c2p]].filter(([n, ph]) => n || ph).map(([n, ph]) => ({ name: n || '', phone: ph || '' })),
+  };
+}
+function syncPublic(profileOverride = {}, foodName) {
+  const token = S.profile.sitterToken;
+  if (token) write(store.setPublic(token, buildPublic(profileOverride, foodName)));
+}
+const sitterLink = (token) => `${location.origin}${location.pathname}?s=${token}`;
+
+function sheetSitter() {
+  const s = S.profile.sitter || {}, token = S.profile.sitterToken;
+  const body = `
+    <p class="hint">הפרטים כאן, יחד עם השם, התמונה, פרטי הווטרינר ו"חשוב לזכור" מהפרופיל, יופיעו בכרטיס. מי שמקבל את הקישור רואה רק את הכרטיס – לא את שאר האפליקציה.</p>
+    ${SITTER_FIELDS.map(([k, icon, label, ph]) => `<label>${icon} ${label}<textarea name="${k}" rows="2" placeholder="${ph}">${esc(s[k])}</textarea></label>`).join('')}
+    <p class="hint" style="margin-top:16px">📞 אנשי קשר</p>
+    <div class="row two"><label>שם<input name="c1n" value="${esc(s.c1n)}"></label><label>טלפון<input name="c1p" type="tel" value="${esc(s.c1p)}"></label></div>
+    <div class="row two"><label>שם<input name="c2n" value="${esc(s.c2n)}"></label><label>טלפון<input name="c2p" type="tel" value="${esc(s.c2p)}"></label></div>
+    <button class="btn primary block">שמירה</button>
+    <div class="share-box">
+      ${token ? `<b>🔗 קישור פעיל</b>
+        <div class="link-text" dir="ltr">${esc(sitterLink(token))}</div>
+        <div class="row gap">
+          <button type="button" class="btn primary small" data-act="sitter-share">שיתוף הקישור</button>
+          <a class="btn small" href="${esc(sitterLink(token))}" target="_blank" rel="noopener">👀 תצוגה</a>
+          <button type="button" class="btn ghost danger small" data-act="sitter-revoke">ביטול הקישור</button>
+        </div>
+        <p class="hint">כל שמירה מעדכנת את הכרטיס אוטומטית. "ביטול הקישור" מנתק אותו לגמרי.</p>`
+      : `<b>🔗 שיתוף</b><p class="hint">יוצרים קישור ושולחים בוואטסאפ למי ששומר על ${esc(dogName())}.</p>
+        <button type="button" class="btn primary block" data-act="sitter-create">יצירת קישור לשמרטף</button>`}
+    </div>`;
+  openSheet('כרטיס לשמרטף', body, (d) => {
+    const sitter = {};
+    for (const k of ['feeding', 'meds', 'walks', 'behavior', 'other', 'c1n', 'c1p', 'c2n', 'c2p']) sitter[k] = (d[k] || '').trim();
+    write(store.saveProfile({ sitter }));
+    syncPublic({ sitter });
+    toast('נשמר ✓');
+  });
+}
+
+function readSitterForm() {
+  const f = dlg().querySelector('form');
+  if (!f || !f.feeding) return null;
+  const sitter = {};
+  for (const k of ['feeding', 'meds', 'walks', 'behavior', 'other', 'c1n', 'c1p', 'c2n', 'c2p']) sitter[k] = (f[k].value || '').trim();
+  return sitter;
+}
+
+async function createSitterLink() {
+  const bytes = crypto.getRandomValues(new Uint8Array(18));
+  const token = Array.from(bytes, (b) => 'abcdefghijkmnpqrstuvwxyz23456789'[b % 32]).join('');
+  const sitter = readSitterForm() || S.profile.sitter || {};
+  try {
+    await store.setPublic(token, buildPublic({ sitter }));
+    await write(store.saveProfile({ sitter, sitterToken: token }));
+    S.profile.sitter = sitter; S.profile.sitterToken = token;
+    sheetSitter();
+    toast('הקישור מוכן ✓');
+  } catch (e) { toast(errMsg(e)); }
+}
+
+async function shareSitterLink() {
+  const url = sitterLink(S.profile.sitterToken);
+  const text = `כל מה שצריך לדעת על ${dogName()} 🐶`;
+  try {
+    if (navigator.share) await navigator.share({ title: text, text, url });
+    else { await navigator.clipboard.writeText(url); toast('הקישור הועתק ✓'); }
+  } catch (e) {
+    if (e?.name !== 'AbortError') { try { await navigator.clipboard.writeText(url); toast('הקישור הועתק ✓'); } catch {} }
+  }
+}
+
+function revokeSitterLink() {
+  if (!confirm('לבטל את הקישור? מי שקיבל אותו כבר לא יוכל לפתוח את הכרטיס.')) return;
+  const token = S.profile.sitterToken;
+  write(store.removePublic(token));
+  write(store.saveProfile({ sitterToken: null }));
+  S.profile.sitterToken = null;
+  sheetSitter();
+  toast('הקישור בוטל');
+}
+
+const telHref = (ph) => `tel:${String(ph).replace(/[^\d+]/g, '')}`;
+function sitterHTML(d) {
+  const sub = [d.breed, ageText(d.birthDate)].filter(Boolean).map(esc).join(' · ');
+  const block = (icon, title, text) => (text ? `<section class="card scard"><h3>${icon} ${title}</h3><p>${esc(text)}</p></section>` : '');
+  return `
+  <div class="sitter-page">
+    <section class="hero sitter-hero">
+      <div class="avatar">${d.photo ? `<img src="${esc(d.photo)}" alt="">` : '<span>🐶</span>'}</div>
+      <div class="hero-text"><p class="muted small">כרטיס לשמרטף</p><h1>${esc(d.name)}</h1>${sub ? `<p>${sub}</p>` : ''}</div>
+    </section>
+    ${d.notes ? `<section class="card scard warn"><h3>⚠️ חשוב לדעת</h3><p>${esc(d.notes)}</p></section>` : ''}
+    ${block('🍖', 'אוכל', [d.foodName && `אוכל: ${d.foodName}`, d.feeding].filter(Boolean).join('\n'))}
+    ${block('💊', 'תרופות וטיפולים', d.meds)}
+    ${block('🚶', 'טיולים ושגרה', d.walks)}
+    ${block('🐾', 'התנהגות', d.behavior)}
+    ${block('📝', 'עוד דברים', d.other)}
+    ${(d.contacts || []).length ? `<section class="card scard"><h3>📞 אנשי קשר</h3>${d.contacts.map((c) => `
+      <a class="call-row" ${c.phone ? `href="${telHref(c.phone)}"` : ''}><span><b>${esc(c.name)}</b> <span class="muted" dir="ltr">${esc(c.phone)}</span></span>${c.phone ? '<span class="call">📞</span>' : ''}</a>`).join('')}</section>` : ''}
+    ${d.vetName || d.vetPhone ? `<section class="card scard"><h3>🩺 וטרינר</h3>
+      <a class="call-row" ${d.vetPhone ? `href="${telHref(d.vetPhone)}"` : ''}><span><b>${esc(d.vetName || 'וטרינר')}</b> <span class="muted" dir="ltr">${esc(d.vetPhone)}</span></span>${d.vetPhone ? '<span class="call">📞</span>' : ''}</a></section>` : ''}
+    ${d.chip ? `<p class="muted small center">מספר שבב: <span dir="ltr">${esc(d.chip)}</span></p>` : ''}
+    ${d.updatedAt ? `<p class="muted small center">עודכן ${fmt(toISO(new Date(d.updatedAt)))}</p>` : ''}
+  </div>`;
+}
+
+async function bootSitter(token) {
+  document.body.classList.add('sitter-mode');
+  let d = null;
+  try { d = await store.getPublic(token); } catch {}
+  $('#boot').remove();
+  $('#app').hidden = false;
+  $('#view').innerHTML = d ? sitterHTML(d) : '<div class="empty" style="margin-top:30vh"><p>הקישור הזה כבר לא פעיל 🐾</p></div>';
+  if (d) document.title = `${d.name} – כרטיס לשמרטף`;
+}
+
 // ---------- actions ----------
 const ACTIONS = {
   go: (_, el) => { S.tab = el.dataset.to; render(); scrollTo(0, 0); },
@@ -587,6 +968,26 @@ const ACTIONS = {
   'del-weight': (id) => { if (confirm('למחוק את השקילה?')) write(store.remove('weights', id)); },
   'edit-profile': () => sheetProfile(),
   'pick-photo': () => dlg().querySelector('#photoInput').click(),
+  'exp-month': (_, el) => {
+    const m = el.dataset.d === '1' ? nextMonth(S.expMonth) : prevMonth(S.expMonth);
+    if (m <= ym(today())) { S.expMonth = m; render(); }
+  },
+  'add-expense': () => sheetExpense(),
+  'edit-expense': (id) => sheetExpense(find('expenses', id)),
+  'del-expense': (id) => { if (!confirm('למחוק את ההוצאה?')) return; write(store.remove('expenses', id)); closeSheet(); toast('נמחק'); },
+  'add-recurring': () => sheetRecurring(),
+  'edit-recurring': (id) => sheetRecurring(find('recurring', id)),
+  'del-recurring': (id) => {
+    if (!confirm('למחוק את ההוצאה הקבועה? חיובים שכבר נרשמו יישארו בהיסטוריה.')) return;
+    write(store.remove('recurring', id)); closeSheet(); toast('נמחק');
+  },
+  'food-bag': () => sheetFoodBag(),
+  'food-settings': () => sheetFoodSettings(),
+  'del-bag': (id) => { if (confirm('למחוק את הרישום?')) { write(store.remove('foodBags', id)); closeSheet(); } },
+  sitter: () => sheetSitter(),
+  'sitter-create': () => createSitterLink(),
+  'sitter-share': () => shareSitterLink(),
+  'sitter-revoke': () => revokeSitterLink(),
   logout: () => { if (confirm(DEMO ? 'לאפס את נתוני ההדגמה?' : 'להתנתק?')) store.logout(); },
 };
 
@@ -605,9 +1006,21 @@ $('#sheet').addEventListener('close', () => { pendingPhoto = null; });
 // ---------- auth / boot ----------
 function startWatch() {
   const onErr = (e) => toast(errMsg(e));
+  const cols = ['treatments', 'history', 'items', 'weights', 'expenses', 'recurring', 'foodBags'];
   unsubs = [
-    store.watchProfile((p) => { S.profile = p || {}; render(); }, onErr),
-    ...['treatments', 'history', 'items', 'weights'].map((n) => store.watch(n, (arr) => { S[n] = arr; render(); }, onErr)),
+    store.watchProfile((p, m) => {
+      S.profile = p || {};
+      if (!m?.fromCache) { S.ready.profile = true; seedDefaults(); }
+      render();
+    }, onErr),
+    ...cols.map((n) => store.watch(n, (arr, m) => {
+      S[n] = arr;
+      if (!m?.fromCache) {
+        S.ready[n] = true;
+        if (n === 'recurring') { seedDefaults(); genRecurring(); }
+      }
+      render();
+    }, onErr)),
   ];
 }
 function stopWatch() { unsubs.forEach((u) => { try { u(); } catch {} }); unsubs = []; }
@@ -641,6 +1054,8 @@ $('#loginForm').addEventListener('submit', async (e) => {
     $('#boot').textContent = 'לא הצלחתי להתחבר ל-Firebase. בדקו חיבור לאינטרנט והגדרות.';
     return;
   }
+  const sitterToken = new URLSearchParams(location.search).get('s');
+  if (sitterToken) { await bootSitter(sitterToken); return; }
   $('#boot').remove();
   store.onAuth((user) => {
     S.user = user;

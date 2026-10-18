@@ -1,0 +1,25 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // רק שני המיילים האלה יכולים לקרוא ולכתוב (באותיות קטנות)
+    function allowed() {
+      return request.auth != null
+        && request.auth.token.email in ['oofek195711@gmail.com', 'NOGA_EMAIL@gmail.com'];
+    }
+
+    match /dogs/{dogId} {
+      allow read, write: if allowed();
+      match /{sub=**} {
+        allow read, write: if allowed();
+      }
+    }
+
+    // כרטיס לשמרטף: כל מי שיש לו את הקישור המדויק יכול לקרוא אותו (בלי רשימה), רק אתם יכולים לשנות
+    match /public/{token} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if allowed();
+    }
+  }
+}
