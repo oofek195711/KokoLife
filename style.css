@@ -366,3 +366,20 @@ label.check input { width: 22px; height: 22px; margin: 0; accent-color: var(--pr
 .ptr.spin { transform: translate(-50%, 70px) !important; animation: ptrspin .8s linear infinite; }
 @keyframes ptrspin { to { transform: translate(-50%, 70px) rotate(360deg); } }
 html, body { overscroll-behavior-y: contain; }
+
+/* ---------- vet questions ---------- */
+.count-pill { background: var(--primary); color: var(--primary-ink); font-weight: 700; font-size: .85rem; min-width: 28px; height: 28px; border-radius: 14px; display: grid; place-items: center; padding: 0 8px; flex: none; }
+.qadd { display: flex; gap: 8px; align-items: flex-end; margin-top: 4px; }
+.qadd textarea { margin: 0; flex: 1; }
+.qadd .btn { flex: none; }
+.qlist { list-style: none; padding: 0; margin: 14px 0 0; }
+.qrow { display: flex; align-items: center; gap: 10px; background: var(--card); border-radius: 14px; padding: 10px 12px; margin-bottom: 8px; box-shadow: var(--shadow); }
+.qrow.tappable { cursor: pointer; align-items: flex-start; }
+.qnum { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--primary-soft); color: var(--primary); font-weight: 700; font-size: .85rem; display: grid; place-items: center; }
+.qlist.done .qnum { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.qinfo { flex: 1; min-width: 0; }
+.qtext { white-space: pre-wrap; word-break: break-word; }
+.qlist.done .qtext { font-weight: 500; }
+.qanswer { white-space: pre-wrap; font-size: .9rem; margin-top: 4px; padding-inline-start: 10px; border-inline-start: 3px solid var(--ok); }
+.qempty { margin: 22px 0 6px; }
+.qbig { font-size: 1.1rem; font-weight: 500; background: var(--card); padding: 12px 14px; border-radius: 14px; white-space: pre-wrap; box-shadow: var(--shadow); }

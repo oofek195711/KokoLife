@@ -1,6 +1,6 @@
 import { initStore, DEMO } from './core/store.js';
 
-const VERSION = '1.1.2';
+const VERSION = '1.1.3';
 
 // ---------- helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -92,7 +92,7 @@ const VERDICTS = { love: ['😍', 'אהב'], ok: ['😐', 'ככה ככה'], no: 
 // ---------- state ----------
 const S = {
   user: null, profile: {}, treatments: [], history: [], items: [], weights: [],
-  expenses: [], recurring: [], foodBags: [], ready: {},
+  expenses: [], recurring: [], foodBags: [], vetQuestions: [], ready: {},
   tab: 'home', careSeg: 'plan', itemFilter: 'all', onlyLove: false, expMonth: ym(today()),
 };
 let store;
@@ -203,6 +203,8 @@ function viewHome() {
     <span class="vet-text"><b>${esc(p.vetName || 'וטרינר')}</b>${p.vetPhone ? `<span class="muted">${esc(p.vetPhone)}</span>` : ''}</span>
     ${p.vetPhone ? '<span class="vet-call">📞</span>' : ''}
   </a>` : ''}
+
+  ${vetQCard()}
 
   ${p.notes ? `<div class="card note-card"><b>חשוב לזכור</b><p>${esc(p.notes)}</p></div>` : ''}
 
@@ -318,6 +320,7 @@ function viewWeight() {
 const dlg = () => $('#sheet');
 function openSheet(title, body, onSubmit) {
   const d = dlg();
+  d.dataset.kind = '';
   d.innerHTML = `<form class="sheet-form" novalidate>
     <header class="sheet-head"><h3>${title}</h3><button type="button" class="icon-btn" data-act="close" aria-label="סגירה">✕</button></header>
     <div class="sheet-body">${body}</div></form>`;
@@ -890,6 +893,96 @@ function sheetFoodSettings() {
   });
 }
 
+// ---------- questions for the vet ----------
+const openQs = () => S.vetQuestions.filter((q) => !q.asked).sort((a, b) => (a.createdAt || '').localeCompare(b.createdAt || ''));
+const askedQs = () => S.vetQuestions.filter((q) => q.asked).sort((a, b) => (b.askedDate || '').localeCompare(a.askedDate || '') || (b.updatedAt || '').localeCompare(a.updatedAt || ''));
+
+function vetQCard() {
+  const n = openQs().length;
+  return `<button class="card sitter-btn vetq-btn" data-act="vetq">
+    <span class="vet-icon">❓</span>
+    <span class="vet-text"><b>שאלות לווטרינר</b><span class="muted small">${n ? (n === 1 ? 'שאלה אחת מחכה לביקור הבא' : `${n} שאלות מחכות לביקור הבא`) : 'רושמים כאן שאלות, ושואלים הכל בביקור'}</span></span>
+    ${n ? `<span class="count-pill">${n}</span>` : '<span class="chev">‹</span>'}
+  </button>`;
+}
+
+function vetQListHTML() {
+  const open = openQs(), done = askedQs();
+  return `
+    ${open.length ? `<ul class="qlist">${open.map((q, i) => `
+      <li class="qrow">
+        <span class="qnum">${i + 1}</span>
+        <div class="qinfo"><div class="qtext">${esc(q.text)}</div>${byName(q.by) ? `<div class="muted small">${esc(byName(q.by))}</div>` : ''}</div>
+        <button type="button" class="btn small primary" data-act="vetq-ask" data-id="${q.id}">✓ נשאל</button>
+        <button type="button" class="icon-btn" data-act="vetq-del" data-id="${q.id}" aria-label="מחיקה">🗑</button>
+      </li>`).join('')}</ul>
+      <button type="button" class="btn ghost block" data-act="vetq-share">📤 שיתוף הרשימה</button>`
+    : '<p class="muted center qempty">אין שאלות פתוחות 🐾</p>'}
+    ${done.length ? `<h3 class="sub-title">שאלות שנשאלו</h3>
+      <ul class="qlist done">${done.map((q) => `
+        <li class="qrow tappable" data-act="vetq-ask" data-id="${q.id}">
+          <span class="qnum">✓</span>
+          <div class="qinfo"><div class="qtext">${esc(q.text)}</div>
+            ${q.answer ? `<div class="qanswer">${esc(q.answer)}</div>` : '<div class="muted small">לא נרשמה תשובה</div>'}
+            ${q.askedDate ? `<div class="muted small">${fmt(q.askedDate)}</div>` : ''}</div>
+        </li>`).join('')}</ul>` : ''}`;
+}
+
+function sheetVetQ() {
+  const body = `
+    <div class="qadd">
+      <textarea name="q" rows="2" placeholder="למשל: למה הוא מגרד באוזן?" autocomplete="off"></textarea>
+      <button class="btn primary">הוספה</button>
+    </div>
+    <div id="vqList">${vetQListHTML()}</div>`;
+  const f = openSheet('שאלות לווטרינר', body, (d, form) => {
+    const text = (d.q || '').trim();
+    if (!text) return false;
+    write(store.add('vetQuestions', { text, asked: false }));
+    form.q.value = '';
+    form.q.focus();
+    return false;
+  });
+  dlg().dataset.kind = 'vetq';
+  // Enter adds, Shift+Enter makes a new line
+  f.q.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); f.requestSubmit(); }
+  });
+}
+
+function refreshVetQSheet() {
+  const d = dlg();
+  if (d.open && d.dataset.kind === 'vetq') { const el = d.querySelector('#vqList'); if (el) el.innerHTML = vetQListHTML(); }
+}
+
+function sheetVetAnswer(q) {
+  const body = `
+    <div class="qbig">${esc(q.text)}</div>
+    <label>מה הווטרינר ענה? <small>(לא חובה)</small><textarea name="answer" rows="4" placeholder="התשובה, המלצות, מינון...">${esc(q.answer)}</textarea></label>
+    <label>תאריך הביקור<input type="date" name="date" value="${q.askedDate || today()}" max="${today()}" required></label>
+    <button class="btn primary block">${q.asked ? 'שמירה' : '✓ סימון כנשאל'}</button>
+    ${q.asked ? `<button type="button" class="btn ghost block" data-act="vetq-reopen" data-id="${q.id}">↩ החזרה לשאלות הפתוחות</button>` : ''}
+    <button type="button" class="btn ghost block" data-act="vetq">חזרה לרשימה</button>`;
+  openSheet(q.asked ? 'שאלה שנשאלה' : 'שאלתי את הווטרינר', body, (d) => {
+    write(store.update('vetQuestions', q.id, { asked: true, answer: (d.answer || '').trim(), askedDate: d.date }));
+    toast('נשמר ✓');
+    sheetVetQ();
+    return false;
+  });
+}
+
+async function shareVetQs() {
+  const qs = openQs();
+  if (!qs.length) return;
+  const text = `שאלות לווטרינר על ${dogName()}:\n` + qs.map((q, i) => `${i + 1}. ${q.text}`).join('\n');
+  try {
+    if (navigator.share) await navigator.share({ text });
+    else { await navigator.clipboard.writeText(text); toast('הרשימה הועתקה ✓'); }
+  } catch (e) {
+    if (e?.name !== 'AbortError') { try { await navigator.clipboard.writeText(text); toast('הרשימה הועתקה ✓'); } catch {} }
+  }
+}
+
 // ---------- sitter card ----------
 const SITTER_FIELDS = [
   ['feeding', '🍖', 'אוכל', 'כמה ומתי? למשל: כוס בבוקר וכוס בערב'],
@@ -1071,6 +1164,11 @@ const ACTIONS = {
   'food-bag': () => sheetFoodBag(),
   'food-settings': () => sheetFoodSettings(),
   'del-bag': (id) => { if (confirm('למחוק את הרישום?')) { write(store.remove('foodBags', id)); closeSheet(); } },
+  vetq: () => sheetVetQ(),
+  'vetq-ask': (id) => { const q = find('vetQuestions', id); if (q) sheetVetAnswer(q); },
+  'vetq-del': (id) => { if (confirm('למחוק את השאלה?')) write(store.remove('vetQuestions', id)); },
+  'vetq-reopen': (id) => { write(store.update('vetQuestions', id, { asked: false })); sheetVetQ(); },
+  'vetq-share': () => shareVetQs(),
   sitter: () => sheetSitter(),
   'sitter-create': () => createSitterLink(),
   'sitter-share': () => shareSitterLink(),
@@ -1093,7 +1191,7 @@ $('#sheet').addEventListener('close', () => { pendingPhoto = null; });
 // ---------- auth / boot ----------
 function startWatch() {
   const onErr = (e) => toast(errMsg(e));
-  const cols = ['treatments', 'history', 'items', 'weights', 'expenses', 'recurring', 'foodBags'];
+  const cols = ['treatments', 'history', 'items', 'weights', 'expenses', 'recurring', 'foodBags', 'vetQuestions'];
   unsubs = [
     store.watchProfile((p, m) => {
       S.profile = p || {};
@@ -1106,6 +1204,7 @@ function startWatch() {
         S.ready[n] = true;
         if (n === 'recurring') { seedDefaults(); genRecurring(); }
       }
+      if (n === 'vetQuestions') refreshVetQSheet();
       render();
     }, onErr)),
   ];
