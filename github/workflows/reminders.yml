@@ -1,0 +1,49 @@
+name: Koko reminders
+
+on:
+  schedule:
+    - cron: '23 * * * *'   # every hour: connects new people, and sends the daily reminders once it's 11:00 in Israel
+    - cron: '41 4 1 * *'   # once a month: keeps the schedule alive (GitHub pauses schedules after 60 quiet days)
+  workflow_dispatch:
+    inputs:
+      test:
+        description: 'Send a test message now'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency: koko-reminders
+
+jobs:
+  remind:
+    if: github.event.schedule != '41 4 1 * *'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install --omit=dev --no-audit --no-fund
+        working-directory: reminders
+      - run: node send.mjs
+        working-directory: reminders
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          FIREBASE_SA: ${{ secrets.FIREBASE_SA }}
+          TEST: ${{ github.event_name == 'workflow_dispatch' && inputs.test }}
+          APP_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+
+  keepalive:
+    if: github.event.schedule == '41 4 1 * *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          date -u > reminders/keepalive.txt
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reminders/keepalive.txt
+          git commit -m "keepalive" && git push || true
