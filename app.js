@@ -1,6 +1,6 @@
 import { initStore, DEMO } from './core/store.js';
 
-const VERSION = '1.1.3';
+const VERSION = '1.1.4';
 
 // ---------- helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -92,7 +92,7 @@ const VERDICTS = { love: ['😍', 'אהב'], ok: ['😐', 'ככה ככה'], no: 
 // ---------- state ----------
 const S = {
   user: null, profile: {}, treatments: [], history: [], items: [], weights: [],
-  expenses: [], recurring: [], foodBags: [], vetQuestions: [], ready: {},
+  expenses: [], recurring: [], foodBags: [], vetQuestions: [], docs: [], ready: {},
   tab: 'home', careSeg: 'plan', itemFilter: 'all', onlyLove: false, expMonth: ym(today()),
 };
 let store;
@@ -205,6 +205,8 @@ function viewHome() {
   </a>` : ''}
 
   ${vetQCard()}
+
+  ${docsCard()}
 
   ${p.notes ? `<div class="card note-card"><b>חשוב לזכור</b><p>${esc(p.notes)}</p></div>` : ''}
 
@@ -983,6 +985,227 @@ async function shareVetQs() {
   }
 }
 
+// ---------- documents (license, vaccine booklet, insurance...) ----------
+// Metadata + small thumbnail live in "docs" (synced live); full-size pages live in "docPages"
+// (one Firestore document per page, loaded only when opened – keeps the app fast).
+const DOC_TYPES = [
+  ['license', 'רישיון כלב', '🪪'], ['vaccines', 'פנקס חיסונים', '💉'], ['insurance', 'ביטוח', '🛡️'],
+  ['tests', 'בדיקות ותוצאות', '🧪'], ['receipt', 'קבלה / חשבונית', '🧾'], ['other', 'אחר', '📄'],
+];
+const docTypeOf = (k) => DOC_TYPES.find((t) => t[0] === k) || DOC_TYPES[DOC_TYPES.length - 1];
+const MAX_PAGES = 6;
+const pageCache = {};
+let editPages = [];
+
+function docExpiry(d) {
+  if (!d.expiry) return null;
+  const n = daysUntil(d.expiry);
+  return { n, st: n < 0 ? 'over' : n <= 30 ? 'soon' : 'ok',
+    text: n < 0 ? `פג תוקף לפני ${-n} ימים` : n === 0 ? 'פג תוקף היום' : n <= 30 ? `פג תוקף בעוד ${n} ימים` : `בתוקף עד ${fmt(d.expiry)}` };
+}
+const sortedDocs = () => [...S.docs].sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+
+function docsCard() {
+  const n = S.docs.length;
+  const urgent = S.docs.map((d) => ({ d, e: docExpiry(d) })).filter((x) => x.e && x.e.st !== 'ok')
+    .sort((a, b) => a.e.n - b.e.n)[0];
+  const sub = urgent ? `${esc(urgent.d.title)} – ${urgent.e.text}`
+    : n ? (n === 1 ? 'מסמך אחד שמור' : `${n} מסמכים שמורים`) : 'רישיון, פנקס חיסונים, ביטוח – הכל בטלפון';
+  return `<button class="card sitter-btn docs-btn ${urgent ? urgent.e.st : ''}" data-act="docs">
+    <span class="vet-icon">📄</span>
+    <span class="vet-text"><b>מסמכים</b><span class="small ${urgent ? 'warn-text' : 'muted'}">${sub}</span></span>
+    <span class="chev">‹</span>
+  </button>`;
+}
+
+function sheetDocs() {
+  const docs = sortedDocs();
+  const body = `
+    ${docs.length ? `<div class="doc-grid">${docs.map((d) => {
+      const t = docTypeOf(d.type), e = docExpiry(d);
+      return `<button type="button" class="doc-card" data-act="doc-view" data-id="${d.id}">
+        <div class="doc-thumb">${d.thumb ? `<img src="${esc(d.thumb)}" alt="">` : `<span>${t[2]}</span>`}
+          ${d.pages > 1 ? `<span class="doc-pages">${d.pages} עמ׳</span>` : ''}</div>
+        <div class="iname">${esc(d.title || t[1])}</div>
+        <div class="small ${e && e.st !== 'ok' ? 'warn-text ' + e.st : 'muted'}">${e ? e.text : t[1]}</div>
+      </button>`;
+    }).join('')}</div>` : '<p class="muted center qempty">עוד אין מסמכים. מצלמים את הרישיון, פנקס החיסונים וכל מה שחשוב – והם תמיד יהיו בכיס.</p>'}
+    <button type="button" class="btn primary block" data-act="doc-add">+ מסמך חדש</button>`;
+  openSheet('מסמכים', body);
+  dlg().dataset.kind = 'docs';
+}
+
+function refreshDocsSheet() {
+  const d = dlg();
+  if (d.open && d.dataset.kind === 'docs') sheetDocs();
+}
+
+async function loadPages(doc) {
+  const out = [];
+  for (let i = 0; i < (doc.pages || 0); i++) {
+    const key = `${doc.id}_${i}`;
+    if (!pageCache[key]) {
+      const p = await store.get('docPages', key);
+      if (p?.data) pageCache[key] = p.data;
+    }
+    if (pageCache[key]) out.push(pageCache[key]);
+  }
+  return out;
+}
+
+async function sheetDocView(doc) {
+  const t = docTypeOf(doc.type), e = docExpiry(doc);
+  const body = `
+    <div class="doc-meta">
+      <span class="pill">${t[2]} ${t[1]}</span>
+      ${e ? `<span class="pill ${e.st}">${e.text}</span>` : ''}
+    </div>
+    ${doc.number ? `<button type="button" class="card copy-row" data-act="doc-copy" data-id="${doc.id}">
+      <span class="muted small">מספר</span><b dir="ltr">${esc(doc.number)}</b><span class="muted small">העתקה</span></button>` : ''}
+    ${doc.notes ? `<p class="view-notes">${esc(doc.notes)}</p>` : ''}
+    <div id="docPagesView" class="doc-pages-view"><p class="muted center">טוען... 🐾</p></div>
+    <div class="row gap doc-actions">
+      <button type="button" class="btn primary" data-act="doc-share" data-id="${doc.id}">📤 שיתוף</button>
+      <button type="button" class="btn" data-act="doc-edit" data-id="${doc.id}">עריכה</button>
+      <button type="button" class="btn ghost" data-act="docs">חזרה</button>
+    </div>`;
+  openSheet(esc(doc.title || t[1]), body);
+  try {
+    const pages = await loadPages(doc);
+    const box = dlg().querySelector('#docPagesView');
+    if (!box) return;
+    box.innerHTML = pages.length
+      ? pages.map((src, i) => `<button type="button" class="doc-page" data-act="doc-zoom" data-id="${doc.id}" data-i="${i}"><img src="${src}" alt="עמוד ${i + 1}"></button>`).join('')
+      : '<p class="muted center">אין תמונות במסמך הזה</p>';
+  } catch (err) { toast(errMsg(err)); }
+}
+
+function zoomPage(src) {
+  const v = document.createElement('dialog');
+  v.className = 'viewer';
+  v.innerHTML = `<button type="button" class="viewer-close" aria-label="סגירה">✕</button>
+    <div class="viewer-scroll"><img src="${src}" alt=""></div>
+    <p class="viewer-hint">הקשה כדי להגדיל · הקשה נוספת כדי להקטין</p>`;
+  document.body.appendChild(v);
+  v.showModal();
+  const im = v.querySelector('img');
+  im.addEventListener('click', () => v.classList.toggle('zoomed'));
+  const close = () => { v.close(); v.remove(); };
+  v.querySelector('.viewer-close').onclick = close;
+  v.addEventListener('cancel', (e) => { e.preventDefault(); close(); });
+}
+
+async function shareDoc(doc) {
+  try {
+    const pages = await loadPages(doc);
+    if (!pages.length) return;
+    const name = (doc.title || docTypeOf(doc.type)[1]).replace(/[\\/:*?"<>|]/g, '');
+    const files = await Promise.all(pages.map(async (src, i) =>
+      new File([await (await fetch(src)).blob()], `${name}${pages.length > 1 ? `-${i + 1}` : ''}.jpg`, { type: 'image/jpeg' })));
+    if (navigator.canShare && navigator.canShare({ files })) {
+      await navigator.share({ files, title: name });
+    } else {
+      files.forEach((f) => {
+        const url = URL.createObjectURL(f);
+        const a = Object.assign(document.createElement('a'), { href: url, download: f.name });
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      });
+    }
+  } catch (e) { if (e?.name !== 'AbortError') toast('לא הצלחתי לשתף'); }
+}
+
+function pagesEditorHTML() {
+  return `${editPages.map((src, i) => `<div class="pg">
+      <img src="${src}" alt=""><span class="pg-n">${i + 1}</span>
+      <button type="button" class="pg-del" data-act="pg-del" data-i="${i}" aria-label="מחיקת עמוד">✕</button></div>`).join('')}
+    ${editPages.length < MAX_PAGES ? `<button type="button" class="pg pg-add" data-act="pg-add"><span>📷<br>${editPages.length ? 'עוד עמוד' : 'צילום / תמונה'}</span></button>` : ''}`;
+}
+const redrawPages = () => { const b = dlg().querySelector('#pagesEd'); if (b) b.innerHTML = pagesEditorHTML(); };
+
+async function sheetDocEdit(doc) {
+  const isNew = !doc;
+  doc = doc || { type: 'license' };
+  editPages = [];
+  const body = `
+    <div id="pagesEd" class="pages-ed">${isNew ? pagesEditorHTML() : '<p class="muted">טוען...</p>'}</div>
+    <input type="file" accept="image/*" id="docInput" multiple hidden>
+    <p class="hint">אפשר כמה עמודים (למשל שני צדדים של הרישיון). צלמו ישר ובאור טוב.</p>
+    <label>סוג<select name="type">${DOC_TYPES.map((t) => `<option value="${t[0]}" ${t[0] === doc.type ? 'selected' : ''}>${t[2]} ${t[1]}</option>`).join('')}</select></label>
+    <label>שם<input name="title" value="${esc(doc.title || '')}" placeholder="${docTypeOf(doc.type)[1]}" autocomplete="off"></label>
+    <div class="row two">
+      <label>מספר <small>(לא חובה)</small><input name="number" value="${esc(doc.number)}" dir="ltr" autocomplete="off"></label>
+      <label>בתוקף עד <small>(לא חובה)</small><input type="date" name="expiry" value="${esc(doc.expiry)}"></label>
+    </div>
+    <label>הערות<textarea name="notes" rows="2">${esc(doc.notes)}</textarea></label>
+    <button class="btn primary block">${isNew ? 'שמירה' : 'שמירת שינויים'}</button>
+    ${!isNew ? `<button type="button" class="btn ghost danger block" data-act="doc-del" data-id="${doc.id}">מחיקת המסמך</button>` : ''}`;
+  const f = openSheet(isNew ? 'מסמך חדש' : 'עריכת מסמך', body, (d, form) => {
+    const btn = form.querySelector('.btn.primary.block');
+    btn.disabled = true;
+    saveDoc(isNew ? null : doc, d).then((ok) => { if (ok) { toast('נשמר ✓'); sheetDocs(); } else btn.disabled = false; });
+    return false;
+  });
+  f.type.addEventListener('change', () => { f.title.placeholder = docTypeOf(f.type.value)[1]; });
+  f.querySelector('#docInput').addEventListener('change', async (e) => {
+    const files = [...e.target.files].slice(0, MAX_PAGES - editPages.length);
+    e.target.value = '';
+    for (const file of files) {
+      try { editPages.push(await compressImage(file, 1600)); } catch { toast('לא הצלחתי לקרוא תמונה'); }
+    }
+    redrawPages();
+  });
+  if (!isNew) {
+    try { editPages = await loadPages(doc); } catch {}
+    redrawPages();
+  }
+}
+
+async function makeThumb(src) {
+  const img = new Image();
+  await new Promise((r, j) => { img.onload = r; img.onerror = j; img.src = src; });
+  const s = Math.min(1, 360 / Math.max(img.width, img.height));
+  const c = document.createElement('canvas');
+  c.width = Math.round(img.width * s); c.height = Math.round(img.height * s);
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.7);
+}
+
+async function saveDoc(doc, d) {
+  if (!editPages.length && !doc) { toast('צריך לצלם או לבחור לפחות תמונה אחת'); return false; }
+  const id = doc?.id || `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+  try {
+    for (let i = 0; i < editPages.length; i++) {
+      const key = `${id}_${i}`;
+      if (pageCache[key] !== editPages[i]) {
+        await store.set('docPages', key, { docId: id, idx: i, data: editPages[i] });
+        pageCache[key] = editPages[i];
+      }
+    }
+    for (let i = editPages.length; i < (doc?.pages || 0); i++) {
+      await store.remove('docPages', `${id}_${i}`);
+      delete pageCache[`${id}_${i}`];
+    }
+    await store.set('docs', id, {
+      type: d.type, title: (d.title || '').trim() || docTypeOf(d.type)[1], number: (d.number || '').trim(),
+      expiry: d.expiry || '', notes: (d.notes || '').trim(), pages: editPages.length,
+      thumb: editPages.length ? await makeThumb(editPages[0]) : '',
+      ...(doc ? {} : { createdAt: new Date().toISOString() }),
+    });
+    return true;
+  } catch (e) { toast(errMsg(e)); return false; }
+}
+
+async function deleteDoc(doc) {
+  if (!confirm(`למחוק את "${doc.title}"?`)) return;
+  try {
+    for (let i = 0; i < (doc.pages || 0); i++) { await store.remove('docPages', `${doc.id}_${i}`); delete pageCache[`${doc.id}_${i}`]; }
+    await store.remove('docs', doc.id);
+    toast('נמחק');
+    sheetDocs();
+  } catch (e) { toast(errMsg(e)); }
+}
+
 // ---------- sitter card ----------
 const SITTER_FIELDS = [
   ['feeding', '🍖', 'אוכל', 'כמה ומתי? למשל: כוס בבוקר וכוס בערב'],
@@ -1164,6 +1387,16 @@ const ACTIONS = {
   'food-bag': () => sheetFoodBag(),
   'food-settings': () => sheetFoodSettings(),
   'del-bag': (id) => { if (confirm('למחוק את הרישום?')) { write(store.remove('foodBags', id)); closeSheet(); } },
+  docs: () => sheetDocs(),
+  'doc-add': () => sheetDocEdit(),
+  'doc-view': (id) => { const d = find('docs', id); if (d) sheetDocView(d); },
+  'doc-edit': (id) => { const d = find('docs', id); if (d) sheetDocEdit(d); },
+  'doc-del': (id) => { const d = find('docs', id); if (d) deleteDoc(d); },
+  'doc-share': (id) => { const d = find('docs', id); if (d) shareDoc(d); },
+  'doc-zoom': (_, el) => { const img = el.querySelector('img'); if (img) zoomPage(img.src); },
+  'doc-copy': async (id) => { const d = find('docs', id); try { await navigator.clipboard.writeText(d.number); toast('הועתק ✓'); } catch {} },
+  'pg-add': () => dlg().querySelector('#docInput').click(),
+  'pg-del': (_, el) => { editPages.splice(Number(el.dataset.i), 1); redrawPages(); },
   vetq: () => sheetVetQ(),
   'vetq-ask': (id) => { const q = find('vetQuestions', id); if (q) sheetVetAnswer(q); },
   'vetq-del': (id) => { if (confirm('למחוק את השאלה?')) write(store.remove('vetQuestions', id)); },
@@ -1191,7 +1424,7 @@ $('#sheet').addEventListener('close', () => { pendingPhoto = null; });
 // ---------- auth / boot ----------
 function startWatch() {
   const onErr = (e) => toast(errMsg(e));
-  const cols = ['treatments', 'history', 'items', 'weights', 'expenses', 'recurring', 'foodBags', 'vetQuestions'];
+  const cols = ['treatments', 'history', 'items', 'weights', 'expenses', 'recurring', 'foodBags', 'vetQuestions', 'docs'];
   unsubs = [
     store.watchProfile((p, m) => {
       S.profile = p || {};
@@ -1205,6 +1438,7 @@ function startWatch() {
         if (n === 'recurring') { seedDefaults(); genRecurring(); }
       }
       if (n === 'vetQuestions') refreshVetQSheet();
+      if (n === 'docs') refreshDocsSheet();
       render();
     }, onErr)),
   ];

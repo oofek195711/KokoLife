@@ -56,6 +56,8 @@ async function createFirebase() {
     remove: (name, id) => F.deleteDoc(ref(name, id)),
 
     // Public (no login) – for the sitter card link
+    // Read one document on demand (used for document pages, which are too big to sync all the time)
+    get: async (name, id) => { const s = await F.getDoc(ref(name, id)); return s.exists() ? { id: s.id, ...s.data() } : null; },
     getPublic: async (token) => { const s = await F.getDoc(pubRef(token)); return s.exists() ? s.data() : null; },
     setPublic: (token, data) => F.setDoc(pubRef(token), { ...data, updatedAt: now() }),
     removePublic: (token) => F.deleteDoc(pubRef(token)),
@@ -96,6 +98,7 @@ function createDemo() {
     set: async (name, id, d) => { (data[name] ||= {})[id] = { ...(data[name][id] || {}), ...d, by: 'demo', updatedAt: now() }; commit(name); },
     update: async (name, id, d) => { Object.assign(data[name][id], d); commit(name); },
     remove: async (name, id) => { delete data[name][id]; commit(name); },
+    get: async (name, id) => (data[name]?.[id] ? { id, ...data[name][id] } : null),
     getPublic: async (token) => data.public[token] || null,
     setPublic: async (token, d) => { data.public[token] = d; save(); },
     removePublic: async (token) => { delete data.public[token]; save(); },
