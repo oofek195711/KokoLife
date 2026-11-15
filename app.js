@@ -1,6 +1,6 @@
 import { initStore, DEMO } from './core/store.js';
 
-const VERSION = '1.1.4';
+const VERSION = '1.2.0';
 
 // ---------- helpers ----------
 const $ = (s, r = document) => r.querySelector(s);
@@ -92,7 +92,7 @@ const VERDICTS = { love: ['😍', 'אהב'], ok: ['😐', 'ככה ככה'], no: 
 // ---------- state ----------
 const S = {
   user: null, profile: {}, treatments: [], history: [], items: [], weights: [],
-  expenses: [], recurring: [], foodBags: [], vetQuestions: [], docs: [], ready: {},
+  expenses: [], recurring: [], foodBags: [], vetQuestions: [], docs: [], system: [], ready: {},
   tab: 'home', careSeg: 'plan', itemFilter: 'all', onlyLove: false, expMonth: ym(today()),
 };
 let store;
@@ -207,6 +207,8 @@ function viewHome() {
   ${vetQCard()}
 
   ${docsCard()}
+
+  ${tgCard()}
 
   ${p.notes ? `<div class="card note-card"><b>חשוב לזכור</b><p>${esc(p.notes)}</p></div>` : ''}
 
@@ -1206,6 +1208,55 @@ async function deleteDoc(doc) {
   } catch (e) { toast(errMsg(e)); }
 }
 
+// ---------- Telegram reminders (the sending itself runs on GitHub Actions, see reminders/send.mjs) ----------
+const tgInfo = () => S.system.find((x) => x.id === 'telegram') || {};
+
+function tgCard() {
+  const t = tgInfo(), chats = t.chats || [];
+  return `<button class="card sitter-btn" data-act="tg">
+    <span class="vet-icon">🔔</span>
+    <span class="vet-text"><b>תזכורות בטלגרם</b><span class="muted small">${chats.length
+      ? `מחוברים: ${chats.map((c) => esc(c.name)).join(', ')}`
+      : 'הודעה שבוע ויום לפני כל טיפול, ב-11:00'}</span></span>
+    <span class="chev">‹</span>
+  </button>`;
+}
+
+function ensureTgCode() {
+  const t = tgInfo();
+  if (t.code || !S.ready.system) return t.code;
+  const bytes = crypto.getRandomValues(new Uint8Array(12));
+  const code = Array.from(bytes, (b) => 'abcdefghijkmnpqrstuvwxyz23456789'[b % 32]).join('');
+  write(store.set('system', 'telegram', { code }));
+  return code;
+}
+
+function sheetTg() {
+  const t = tgInfo(), chats = t.chats || [];
+  const code = ensureTgCode();
+  const link = t.bot && code ? `https://t.me/${encodeURIComponent(t.bot)}?start=${code}` : '';
+  const lastRun = t.lastRun ? new Date(t.lastRun) : null;
+  const body = `
+    <p class="hint">כל יום ב-11:00 תגיע הודעה בטלגרם על כל מה שנשאר לו <b>שבוע</b> או <b>יום</b>: טיפולים וחיסונים, מסמכים שפג תוקפם, ואוכל שעומד להיגמר.</p>
+    ${link ? `
+      <a class="btn primary block tg-link" href="${link}" target="_blank" rel="noopener">✈️ חיבור הטלגרם שלי</a>
+      <p class="hint">כל אחד מכם לוחץ על הכפתור <b>בטלפון שלו</b> ← טלגרם נפתח ← לוחצים <b>Start</b> / <b>התחל</b>. האישור "✅ מחובר" יגיע תוך שעה לכל היותר.</p>`
+    : `<div class="card tg-wait"><b>⏳ עוד רגע...</b><p class="small">הבוט עוד לא הופעל. משלימים את ההקמה ב-GitHub (ההוראות ב-README) ומריצים את "Koko reminders" פעם אחת – ואז יופיע כאן כפתור החיבור.</p></div>`}
+    <h3 class="sub-title">מחוברים</h3>
+    ${chats.length ? `<ul class="hist">${chats.map((c) => `<li class="hrow"><span class="hicon">👤</span>
+      <div class="hinfo"><b>${esc(c.name)}</b>${c.since ? `<div class="muted">מאז ${fmt(c.since)}</div>` : ''}</div></li>`).join('')}</ul>`
+    : '<p class="muted small">עוד אף אחד</p>'}
+    ${lastRun ? `<p class="muted small center">בדיקה אחרונה: ${lastRun.toLocaleString('he-IL', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}${t.lastSent ? ` · נשלח לאחרונה ${fmt(t.lastSent)}` : ''}</p>` : ''}
+    <p class="muted small center">כדי להפסיק לקבל תזכורות: שולחים לבוט <span dir="ltr">/stop</span></p>`;
+  openSheet('תזכורות בטלגרם', body);
+  dlg().dataset.kind = 'tg';
+}
+
+function refreshTgSheet() {
+  const d = dlg();
+  if (d.open && d.dataset.kind === 'tg') sheetTg();
+}
+
 // ---------- sitter card ----------
 const SITTER_FIELDS = [
   ['feeding', '🍖', 'אוכל', 'כמה ומתי? למשל: כוס בבוקר וכוס בערב'],
@@ -1387,6 +1438,7 @@ const ACTIONS = {
   'food-bag': () => sheetFoodBag(),
   'food-settings': () => sheetFoodSettings(),
   'del-bag': (id) => { if (confirm('למחוק את הרישום?')) { write(store.remove('foodBags', id)); closeSheet(); } },
+  tg: () => sheetTg(),
   docs: () => sheetDocs(),
   'doc-add': () => sheetDocEdit(),
   'doc-view': (id) => { const d = find('docs', id); if (d) sheetDocView(d); },
@@ -1424,7 +1476,7 @@ $('#sheet').addEventListener('close', () => { pendingPhoto = null; });
 // ---------- auth / boot ----------
 function startWatch() {
   const onErr = (e) => toast(errMsg(e));
-  const cols = ['treatments', 'history', 'items', 'weights', 'expenses', 'recurring', 'foodBags', 'vetQuestions', 'docs'];
+  const cols = ['treatments', 'history', 'items', 'weights', 'expenses', 'recurring', 'foodBags', 'vetQuestions', 'docs', 'system'];
   unsubs = [
     store.watchProfile((p, m) => {
       S.profile = p || {};
@@ -1439,6 +1491,7 @@ function startWatch() {
       }
       if (n === 'vetQuestions') refreshVetQSheet();
       if (n === 'docs') refreshDocsSheet();
+      if (n === 'system') refreshTgSheet();
       render();
     }, onErr)),
   ];
